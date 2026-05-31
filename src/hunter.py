@@ -40,11 +40,11 @@ NICHOS = [
             {"query": "victron dc dc 12 12 18",        "preco_mercado": 80},
             {"query": "victron dc dc 12 12 30",        "preco_mercado": 100},
             {"query": "victron dc dc XS 12 50",        "preco_mercado": 200},
-            {"query": "victron smart mppt 75 15",              "preco_mercado": 45},
-            {"query": "victron smart mppt 100 20",  "preco_mercado": 70},
-            {"query": "victron smart mppt 100 30",  "preco_mercado": 90},
-            {"query": "victron smart mppt 100 50",  "preco_mercado": 100},
-            {"query": "victron smart mppt 150 35",  "preco_mercado": 100},
+            {"query": "victron mppt 75 15",              "preco_mercado": 45},
+            {"query": "victron mppt 100 20",  "preco_mercado": 70},
+            {"query": "victron mppt 100 30",  "preco_mercado": 90},
+            {"query": "victron mppt 100 50",  "preco_mercado": 100},
+            {"query": "victron mppt 150 35",  "preco_mercado": 100},
             {"query": "victron GX touch 50",  "preco_mercado": 170},
             {"query": "victron GX touch 70",  "preco_mercado": 250},
             {"query": "victron Cerbo GX",  "preco_mercado": 170},
@@ -52,7 +52,7 @@ NICHOS = [
             {"query": "victron monitor de bateria",  "preco_mercado": 70},
         ],
     },
-    {
+"""    {
         "nome": "Instrumentação",
         "emoji": "🔬",
         "termos": [
@@ -70,10 +70,10 @@ NICHOS = [
         "termos": [
             {"query": "bateria lifepo4",           "preco_mercado": 200},
             {"query": "bateria litio 12v",         "preco_mercado": 180},
-            {"query": "painel solar",              "preco_mercado": 80},
+            {"query": "painel solar ",              "preco_mercado": 80},
             {"query": "regulador solar mppt",      "preco_mercado": 50},
         ],
-    },
+    }, """
 ]
 
 # ── Logging ───────────────────────────────────────────────────────────────────
