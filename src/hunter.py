@@ -1,0 +1,394 @@
+"""
+Price Hunter - Monitor OLX Portugal + Wallapop para bons negócios
+Nichos: Victron, instrumentação, LiFePO4, Hi-Fi vintage, Arduino/RPi
+"""
+
+import os
+import json
+import time
+import logging
+import hashlib
+import requests
+from bs4 import BeautifulSoup
+
+# ── Configuração ──────────────────────────────────────────────────────────────
+
+# Canal Ntfy — escolha um nome único, ex: "price-hunter-joao-2024"
+# Não partilhe este nome publicamente para evitar spam no seu canal
+NTFY_CHANNEL      = os.environ.get("NTFY_CHANNEL", "")   # ex: price-hunter-joao-2024
+NTFY_SERVER       = os.environ.get("NTFY_SERVER", "https://ntfy.sh")  # servidor público grátis
+CHECK_INTERVAL    = int(os.environ.get("CHECK_INTERVAL", "900"))   # segundos (15 min)
+MIN_MARGIN        = float(os.environ.get("MIN_MARGIN", "30"))       # % mínima
+SEEN_FILE         = "data/seen_ads.json"
+
+# Coordenadas de Portugal (centro) — para o Wallapop mostrar resultados PT
+# Pode afinar: Lisboa = 38.7169, -9.1395 | Porto = 41.1579, -8.6291
+WALLAPOP_LAT      = float(os.environ.get("WALLAPOP_LAT",  "39.5"))
+WALLAPOP_LNG      = float(os.environ.get("WALLAPOP_LNG", "-8.0"))
+WALLAPOP_DIST_KM  = int(os.environ.get("WALLAPOP_DIST_KM", "400"))  # raio em km
+
+# ── Nichos e palavras-chave ───────────────────────────────────────────────────
+
+NICHOS = [
+    {
+        "nome": "Victron Energy",
+        "emoji": "⚡",
+        "termos": [
+            {"query": "victron multiplus",        "preco_mercado": 350},
+            {"query": "victron smartsolar mppt",  "preco_mercado": 120},
+            {"query": "victron bmv",              "preco_mercado": 80},
+            {"query": "victron orion",            "preco_mercado": 90},
+            {"query": "victron phoenix",          "preco_mercado": 150},
+            {"query": "victron bluesolar",        "preco_mercado": 100},
+        ],
+    },
+    {
+        "nome": "Instrumentação",
+        "emoji": "🔬",
+        "termos": [
+            {"query": "osciloscopio rigol",        "preco_mercado": 200},
+            {"query": "osciloscopio tektronix",    "preco_mercado": 300},
+            {"query": "fonte alimentacao bancada", "preco_mercado": 80},
+            {"query": "multimetro fluke",          "preco_mercado": 120},
+            {"query": "gerador sinal",             "preco_mercado": 90},
+            {"query": "osciloscopio siglent",      "preco_mercado": 180},
+        ],
+    },
+    {
+        "nome": "Baterias LiFePO4 & Solar",
+        "emoji": "🔋",
+        "termos": [
+            {"query": "bateria lifepo4",           "preco_mercado": 200},
+            {"query": "bateria litio 12v",         "preco_mercado": 180},
+            {"query": "painel solar",              "preco_mercado": 80},
+            {"query": "regulador solar mppt",      "preco_mercado": 50},
+        ],
+    },
+    {
+        "nome": "Hi-Fi Vintage",
+        "emoji": "🎵",
+        "termos": [
+            {"query": "amplificador valvulas",     "preco_mercado": 200},
+            {"query": "amplificador hifi vintage", "preco_mercado": 150},
+            {"query": "gira discos",               "preco_mercado": 120},
+            {"query": "marantz amplificador",      "preco_mercado": 180},
+            {"query": "nad amplificador",          "preco_mercado": 130},
+        ],
+    },
+    {
+        "nome": "Arduino / Raspberry Pi",
+        "emoji": "🤖",
+        "termos": [
+            {"query": "raspberry pi",                   "preco_mercado": 60},
+            {"query": "arduino lote",                   "preco_mercado": 30},
+            {"query": "componentes electronicos lote",  "preco_mercado": 25},
+        ],
+    },
+]
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%H:%M:%S",
+)
+log = logging.getLogger(__name__)
+
+# ── Persistência ──────────────────────────────────────────────────────────────
+
+def load_seen():
+    os.makedirs("data", exist_ok=True)
+    if os.path.exists(SEEN_FILE):
+        with open(SEEN_FILE) as f:
+            return set(json.load(f))
+    return set()
+
+def save_seen(seen: set):
+    with open(SEEN_FILE, "w") as f:
+        json.dump(list(seen), f)
+
+# ── Utilitários ───────────────────────────────────────────────────────────────
+
+def parse_price(text: str):
+    import re
+    text = str(text).replace(".", "").replace(",", ".")
+    nums = re.findall(r"\d+\.?\d*", text)
+    if nums:
+        val = float(nums[0])
+        if 1 < val < 50000:
+            return val
+    return None
+
+def make_id(url: str) -> str:
+    return hashlib.md5(url.encode()).hexdigest()[:12]
+
+def calc_margin(preco_anuncio: float, preco_mercado: float) -> float:
+    if preco_anuncio <= 0:
+        return 0
+    return ((preco_mercado - preco_anuncio) / preco_anuncio) * 100
+
+# ── Scraper OLX Portugal ──────────────────────────────────────────────────────
+
+OLX_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept-Language": "pt-PT,pt;q=0.9",
+}
+
+def search_olx(query: str) -> list:
+    url = f"https://www.olx.pt/ads/q-{query.replace(' ', '-')}/"
+    ads = []
+    try:
+        r = requests.get(url, headers=OLX_HEADERS, timeout=15)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, "html.parser")
+        for card in soup.select("[data-cy='l-card']")[:20]:
+            try:
+                title_el = card.select_one("h6, [data-testid='ad-title']")
+                title    = title_el.get_text(strip=True) if title_el else ""
+                price_el = card.select_one("[data-testid='ad-price'], .price")
+                price    = parse_price(price_el.get_text(strip=True)) if price_el else None
+                link_el  = card.select_one("a[href]")
+                link     = link_el["href"] if link_el else ""
+                if link and not link.startswith("http"):
+                    link = "https://www.olx.pt" + link
+                loc_el   = card.select_one("[data-testid='location-date']")
+                location = loc_el.get_text(strip=True) if loc_el else ""
+                if title and price and link:
+                    ads.append({
+                        "id": make_id(link),
+                        "title": title,
+                        "price": price,
+                        "location": location,
+                        "link": link,
+                        "fonte": "OLX",
+                    })
+            except Exception:
+                continue
+    except Exception as e:
+        log.warning(f"[OLX] Erro em '{query}': {e}")
+    return ads
+
+# ── Scraper Wallapop (API JSON não oficial) ───────────────────────────────────
+#
+# O Wallapop expõe uma API REST interna usada pela própria app/site.
+# Endpoint: https://api.wallapop.com/api/v3/search
+# Não requer autenticação mas precisa de headers realistas.
+# A resposta JSON tem a chave "search_objects" com a lista de anúncios.
+#
+# Parâmetros relevantes:
+#   keywords        — texto a pesquisar
+#   latitude/longitude + distance_in_km — filtra por zona geográfica
+#   order_by        — "newest" para ver os mais recentes primeiro
+#   filters_source  — "search_box" (imita comportamento do browser)
+#   country_code    — "PT" para restringir a Portugal
+
+WALLAPOP_API = "https://api.wallapop.com/api/v3/search"
+
+WALLAPOP_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "pt-PT,pt;q=0.9,es;q=0.8",
+    "Origin": "https://pt.wallapop.com",
+    "Referer": "https://pt.wallapop.com/",
+    "X-AppVersion": "84000",
+    "X-DeviceOS": "0",
+    "X-PlatformType": "web",
+}
+
+def search_wallapop(query: str) -> list:
+    """
+    Pesquisa o Wallapop via API JSON.
+    Devolve lista de dicts com os mesmos campos que search_olx().
+    """
+    params = {
+        "keywords":       query,
+        "order_by":       "newest",
+        "filters_source": "search_box",
+        "country_code":   "PT",
+        "latitude":       WALLAPOP_LAT,
+        "longitude":      WALLAPOP_LNG,
+        "distance_in_km": WALLAPOP_DIST_KM,
+    }
+    ads = []
+    try:
+        r = requests.get(
+            WALLAPOP_API,
+            params=params,
+            headers=WALLAPOP_HEADERS,
+            timeout=15,
+        )
+        r.raise_for_status()
+        data = r.json()
+
+        items = data.get("search_objects", [])
+        for item in items[:25]:
+            try:
+                # Estrutura da resposta Wallapop:
+                # item.id, item.title, item.price, item.location.city,
+                # item.web_slug  (usado para construir o URL)
+                item_id   = str(item.get("id", ""))
+                title     = item.get("title", "")
+                price_raw = item.get("price", 0)
+                price     = parse_price(price_raw)
+                web_slug  = item.get("web_slug", "")
+                link      = f"https://pt.wallapop.com/item/{web_slug}" if web_slug else ""
+                city      = (item.get("location") or {}).get("city", "")
+
+                if title and price and link:
+                    ads.append({
+                        "id":       make_id(link) if link else make_id(item_id),
+                        "title":    title,
+                        "price":    price,
+                        "location": city,
+                        "link":     link,
+                        "fonte":    "Wallapop",
+                    })
+            except Exception:
+                continue
+
+    except requests.exceptions.HTTPError as e:
+        # 429 = rate limit — aguardar mais entre chamadas
+        if e.response.status_code == 429:
+            log.warning("[Wallapop] Rate limit (429) — a aguardar 60s...")
+            time.sleep(60)
+        else:
+            log.warning(f"[Wallapop] HTTP {e.response.status_code} em '{query}'")
+    except Exception as e:
+        log.warning(f"[Wallapop] Erro em '{query}': {e}")
+
+    return ads
+
+# ── Ntfy ─────────────────────────────────────────────────────────────────────
+#
+# O Ntfy envia notificações push via HTTP POST simples.
+# Cada notificação tem: título, mensagem, prioridade, ícone e link de ação.
+# Documentação: https://docs.ntfy.sh/publish/
+
+def send_ntfy(title: str, message: str, link: str, priority: int = 3):
+    """
+    Envia notificação push via Ntfy.
+    priority: 1=min 2=low 3=default 4=high 5=urgent (vibra e ignora modo silêncio)
+    """
+    if not NTFY_CHANNEL:
+        log.warning("NTFY_CHANNEL não configurado — alerta na consola:")
+        print(f"[{title}] {message}")
+        return
+    url = f"{NTFY_SERVER}/{NTFY_CHANNEL}"
+    try:
+        r = requests.post(
+            url,
+            data=message.encode("utf-8"),
+            headers={
+                "Title":    title.encode("utf-8"),
+                "Priority": str(priority),
+                "Tags":     "moneybag",          # emoji do sino na notificação
+                "Click":    link,                # abre o anúncio ao clicar
+                "Actions":  f"view, Ver anúncio, {link}",  # botão de ação
+            },
+            timeout=10,
+        )
+        r.raise_for_status()
+    except Exception as e:
+        log.error(f"Erro Ntfy: {e}")
+
+def format_alert(ad: dict, nicho: dict, margin: float) -> tuple[str, str, int]:
+    """
+    Devolve (título, corpo, prioridade) para a notificação Ntfy.
+    O título aparece em destaque na notificação; o corpo dá o detalhe.
+    """
+    fonte    = ad.get("fonte", "")
+    badge    = "Wallapop" if fonte == "Wallapop" else "OLX"
+    emoji    = nicho["emoji"]
+
+    if margin >= 80:
+        stars, priority = "🔥", 5   # urgente — vibra mesmo em silêncio
+    elif margin >= 50:
+        stars, priority = "✅", 4   # alta prioridade
+    else:
+        stars, priority = "👀", 3   # normal
+
+    title = f"{stars} {emoji} {ad['title'][:50]}"
+    body  = (
+        f"{nicho['nome']} · {badge}\n"
+        f"Preço: {ad['price']:.0f} € · Margem: +{margin:.0f}%\n"
+        f"📍 {ad['location']}"
+    )
+    return title, body, priority
+
+# ── Loop principal ────────────────────────────────────────────────────────────
+
+def run_cycle(seen: set) -> set:
+    novos = 0
+    alertas = 0
+
+    for nicho in NICHOS:
+        for termo in nicho["termos"]:
+            query        = termo["query"]
+            preco_mercado = termo["preco_mercado"]
+
+            # ---- OLX ----
+            log.info(f"[OLX] '{query}'...")
+            for ad in search_olx(query):
+                if ad["id"] not in seen:
+                    seen.add(ad["id"])
+                    novos += 1
+                    margin = calc_margin(ad["price"], preco_mercado)
+                    if margin >= MIN_MARGIN:
+                        alertas += 1
+                        title, body, prio = format_alert(ad, nicho, margin)
+                        send_ntfy(title, body, ad["link"], prio)
+                        log.info(f"  ALERTA OLX: {ad['title'][:45]} | {ad['price']:.0f}€ | +{margin:.0f}%")
+                        time.sleep(1)
+            time.sleep(3)   # pausa educada entre pedidos OLX
+
+            # ---- Wallapop ----
+            log.info(f"[Wallapop] '{query}'...")
+            for ad in search_wallapop(query):
+                if ad["id"] not in seen:
+                    seen.add(ad["id"])
+                    novos += 1
+                    margin = calc_margin(ad["price"], preco_mercado)
+                    if margin >= MIN_MARGIN:
+                        alertas += 1
+                        title, body, prio = format_alert(ad, nicho, margin)
+                        send_ntfy(title, body, ad["link"], prio)
+                        log.info(f"  ALERTA Wallapop: {ad['title'][:40]} | {ad['price']:.0f}€ | +{margin:.0f}%")
+                        time.sleep(1)
+            time.sleep(4)   # Wallapop é mais sensível a rate limiting
+
+    log.info(f"Ciclo completo — {novos} anúncios novos, {alertas} alertas enviados")
+    save_seen(seen)
+    return seen
+
+def main():
+    log.info("🚀 Price Hunter iniciado (OLX + Wallapop)")
+    log.info(f"Nichos: {', '.join(n['nome'] for n in NICHOS)}")
+    log.info(f"Margem mínima: {MIN_MARGIN}%  |  Intervalo: {CHECK_INTERVAL}s")
+    log.info(f"Wallapop zona: lat={WALLAPOP_LAT} lng={WALLAPOP_LNG} raio={WALLAPOP_DIST_KM}km")
+
+    if not NTFY_CHANNEL:
+        log.warning("⚠️  NTFY_CHANNEL não definido — alertas só na consola")
+
+    seen = load_seen()
+    while True:
+        try:
+            seen = run_cycle(seen)
+        except KeyboardInterrupt:
+            log.info("Interrompido.")
+            break
+        except Exception as e:
+            log.error(f"Erro no ciclo: {e}")
+        log.info(f"Próxima pesquisa em {CHECK_INTERVAL // 60} minutos...")
+        time.sleep(CHECK_INTERVAL)
+
+if __name__ == "__main__":
+    main()
