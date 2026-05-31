@@ -15,7 +15,7 @@ from bs4 import BeautifulSoup
 
 # Canal Ntfy — escolha um nome único, ex: "price-hunter-joao-2024"
 # Não partilhe este nome publicamente para evitar spam no seu canal
-NTFY_CHANNEL      = os.environ.get("NTFY_CHANNEL", "")   # ex: price-hunter-joao-2024
+NTFY_CHANNEL      = os.environ.get("NTFY_CHANNEL", "victron-hunter")   # ex: price-hunter-joao-2024
 NTFY_SERVER       = os.environ.get("NTFY_SERVER", "https://ntfy.sh")  # servidor público grátis
 CHECK_INTERVAL    = int(os.environ.get("CHECK_INTERVAL", "900"))   # segundos (15 min)
 MIN_MARGIN        = float(os.environ.get("MIN_MARGIN", "30"))       # % mínima
@@ -34,12 +34,22 @@ NICHOS = [
         "nome": "Victron Energy",
         "emoji": "⚡",
         "termos": [
-            {"query": "victron multiplus",        "preco_mercado": 350},
-            {"query": "victron smartsolar mppt",  "preco_mercado": 120},
-            {"query": "victron bmv",              "preco_mercado": 80},
-            {"query": "victron orion",            "preco_mercado": 90},
-            {"query": "victron phoenix",          "preco_mercado": 150},
-            {"query": "victron bluesolar",        "preco_mercado": 100},
+            {"query": "victron multiplus 12 1600 70",        "preco_mercado": 400},
+            {"query": "victron multiplus 12 2000 80",        "preco_mercado": 500},
+            {"query": "victron multiplus 12 3000 120",        "preco_mercado": 800},
+            {"query": "victron dc dc 12 12 18",        "preco_mercado": 80},
+            {"query": "victron dc dc 12 12 30",        "preco_mercado": 100},
+            {"query": "victron dc dc XS 12 50",        "preco_mercado": 200},
+            {"query": "victron smart mppt 75 15",              "preco_mercado": 45},
+            {"query": "victron smart mppt 100 20",  "preco_mercado": 70},
+            {"query": "victron smart mppt 100 30",  "preco_mercado": 90},
+            {"query": "victron smart mppt 100 50",  "preco_mercado": 100},
+            {"query": "victron smart mppt 150 35",  "preco_mercado": 100},
+            {"query": "victron GX touch 50",  "preco_mercado": 170},
+            {"query": "victron GX touch 70",  "preco_mercado": 250},
+            {"query": "victron Cerbo GX",  "preco_mercado": 170},
+            {"query": "victron BT 12 220",  "preco_mercado": 70},
+            {"query": "victron monitor de bateria",  "preco_mercado": 70},
         ],
     },
     {
@@ -62,26 +72,6 @@ NICHOS = [
             {"query": "bateria litio 12v",         "preco_mercado": 180},
             {"query": "painel solar",              "preco_mercado": 80},
             {"query": "regulador solar mppt",      "preco_mercado": 50},
-        ],
-    },
-    {
-        "nome": "Hi-Fi Vintage",
-        "emoji": "🎵",
-        "termos": [
-            {"query": "amplificador valvulas",     "preco_mercado": 200},
-            {"query": "amplificador hifi vintage", "preco_mercado": 150},
-            {"query": "gira discos",               "preco_mercado": 120},
-            {"query": "marantz amplificador",      "preco_mercado": 180},
-            {"query": "nad amplificador",          "preco_mercado": 130},
-        ],
-    },
-    {
-        "nome": "Arduino / Raspberry Pi",
-        "emoji": "🤖",
-        "termos": [
-            {"query": "raspberry pi",                   "preco_mercado": 60},
-            {"query": "arduino lote",                   "preco_mercado": 30},
-            {"query": "componentes electronicos lote",  "preco_mercado": 25},
         ],
     },
 ]
@@ -348,7 +338,7 @@ def run_cycle(seen: set) -> set:
                         send_ntfy(title, body, ad["link"], prio)
                         log.info(f"  ALERTA OLX: {ad['title'][:45]} | {ad['price']:.0f}€ | +{margin:.0f}%")
                         time.sleep(1)
-            time.sleep(3)   # pausa educada entre pedidos OLX
+            time.sleep(10)   # pausa educada entre pedidos OLX
 
             # ---- Wallapop ----
             log.info(f"[Wallapop] '{query}'...")
@@ -363,7 +353,7 @@ def run_cycle(seen: set) -> set:
                         send_ntfy(title, body, ad["link"], prio)
                         log.info(f"  ALERTA Wallapop: {ad['title'][:40]} | {ad['price']:.0f}€ | +{margin:.0f}%")
                         time.sleep(1)
-            time.sleep(4)   # Wallapop é mais sensível a rate limiting
+            time.sleep(10)   # Wallapop é mais sensível a rate limiting
 
     log.info(f"Ciclo completo — {novos} anúncios novos, {alertas} alertas enviados")
     save_seen(seen)
