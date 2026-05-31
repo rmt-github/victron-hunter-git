@@ -52,28 +52,6 @@ NICHOS = [
             {"query": "victron monitor de bateria",  "preco_mercado": 70},
         ],
     },
-"""    {
-        "nome": "Instrumentação",
-        "emoji": "🔬",
-        "termos": [
-            {"query": "osciloscopio rigol",        "preco_mercado": 200},
-            {"query": "osciloscopio tektronix",    "preco_mercado": 300},
-            {"query": "fonte alimentacao bancada", "preco_mercado": 80},
-            {"query": "multimetro fluke",          "preco_mercado": 120},
-            {"query": "gerador sinal",             "preco_mercado": 90},
-            {"query": "osciloscopio siglent",      "preco_mercado": 180},
-        ],
-    },
-    {
-        "nome": "Baterias LiFePO4 & Solar",
-        "emoji": "🔋",
-        "termos": [
-            {"query": "bateria lifepo4",           "preco_mercado": 200},
-            {"query": "bateria litio 12v",         "preco_mercado": 180},
-            {"query": "painel solar ",              "preco_mercado": 80},
-            {"query": "regulador solar mppt",      "preco_mercado": 50},
-        ],
-    }, """
 ]
 
 # ── Logging ───────────────────────────────────────────────────────────────────
