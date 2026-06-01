@@ -25,7 +25,7 @@ SEEN_FILE         = "data/seen_ads.json"
 # Pode afinar: Lisboa = 38.7169, -9.1395 | Porto = 41.1579, -8.6291
 WALLAPOP_LAT      = float(os.environ.get("WALLAPOP_LAT",  "39.5"))
 WALLAPOP_LNG      = float(os.environ.get("WALLAPOP_LNG", "-8.0"))
-WALLAPOP_DIST_KM  = int(os.environ.get("WALLAPOP_DIST_KM", "400"))  # raio em km
+WALLAPOP_DIST_KM  = int(os.environ.get("WALLAPOP_DIST_KM", "1000"))  # raio em km
 
 # ── Nichos e palavras-chave ───────────────────────────────────────────────────
 
@@ -181,7 +181,6 @@ def search_wallapop(query: str) -> list:
         "keywords":       query,
         "order_by":       "newest",
         "filters_source": "search_box",
-        "country_code":   "PT",
         "latitude":       WALLAPOP_LAT,
         "longitude":      WALLAPOP_LNG,
         "distance_in_km": WALLAPOP_DIST_KM,
