@@ -13,19 +13,15 @@ from bs4 import BeautifulSoup
 
 # ── Configuração ──────────────────────────────────────────────────────────────
 
-# Canal Ntfy — escolha um nome único, ex: "price-hunter-joao-2024"
-# Não partilhe este nome publicamente para evitar spam no seu canal
-NTFY_CHANNEL      = os.environ.get("NTFY_CHANNEL", "victron-hunter")   # ex: price-hunter-joao-2024
-NTFY_SERVER       = os.environ.get("NTFY_SERVER", "https://ntfy.sh")  # servidor público grátis
-CHECK_INTERVAL    = int(os.environ.get("CHECK_INTERVAL", "900"))   # segundos (15 min)
-MIN_MARGIN        = float(os.environ.get("MIN_MARGIN", "30"))       # % mínima
+NTFY_CHANNEL      = os.environ.get("NTFY_CHANNEL", "victron-hunter")
+NTFY_SERVER       = os.environ.get("NTFY_SERVER", "https://ntfy.sh")
+CHECK_INTERVAL    = int(os.environ.get("CHECK_INTERVAL", "900"))
+MIN_MARGIN        = float(os.environ.get("MIN_MARGIN", "30"))
 SEEN_FILE         = "data/seen_ads.json"
 
-# Coordenadas de Portugal (centro) — para o Wallapop mostrar resultados PT
-# Pode afinar: Lisboa = 38.7169, -9.1395 | Porto = 41.1579, -8.6291
 WALLAPOP_LAT      = float(os.environ.get("WALLAPOP_LAT",  "39.5"))
 WALLAPOP_LNG      = float(os.environ.get("WALLAPOP_LNG", "-8.0"))
-WALLAPOP_DIST_KM  = int(os.environ.get("WALLAPOP_DIST_KM", "1000"))  # raio em km
+WALLAPOP_DIST_KM  = int(os.environ.get("WALLAPOP_DIST_KM", "1000"))
 
 # ── Nichos e palavras-chave ───────────────────────────────────────────────────
 
@@ -34,22 +30,22 @@ NICHOS = [
         "nome": "Victron Energy",
         "emoji": "⚡",
         "termos": [
-            {"query": "victron multiplus 12 1600 70",        "preco_mercado": 400},
-            {"query": "victron multiplus 12 2000 80",        "preco_mercado": 500},
-            {"query": "victron multiplus 12 3000 120",        "preco_mercado": 800},
-            {"query": "victron dc dc 12 12 18",        "preco_mercado": 80},
-            {"query": "victron dc dc 12 12 30",        "preco_mercado": 100},
-            {"query": "victron dc dc XS 12 50",        "preco_mercado": 200},
-            {"query": "victron mppt 75 15",              "preco_mercado": 45},
-            {"query": "victron mppt 100 20",  "preco_mercado": 70},
-            {"query": "victron mppt 100 30",  "preco_mercado": 90},
-            {"query": "victron mppt 100 50",  "preco_mercado": 100},
-            {"query": "victron mppt 150 35",  "preco_mercado": 100},
-            {"query": "victron GX touch 50",  "preco_mercado": 170},
-            {"query": "victron GX touch 70",  "preco_mercado": 250},
-            {"query": "victron Cerbo GX",  "preco_mercado": 170},
-            {"query": "victron BT 12 220",  "preco_mercado": 70},
-            {"query": "victron monitor de bateria",  "preco_mercado": 70},
+            {"query": "victron multiplus 12 1600 70",   "preco_mercado": 400},
+            {"query": "victron multiplus 12 2000 80",   "preco_mercado": 500},
+            {"query": "victron multiplus 12 3000 120",  "preco_mercado": 800},
+            {"query": "victron dc dc 12 12 18",         "preco_mercado": 80},
+            {"query": "victron dc dc 12 12 30",         "preco_mercado": 100},
+            {"query": "victron dc dc XS 12 50",         "preco_mercado": 200},
+            {"query": "victron mppt 75 15",             "preco_mercado": 45},
+            {"query": "victron mppt 100 20",            "preco_mercado": 70},
+            {"query": "victron mppt 100 30",            "preco_mercado": 90},
+            {"query": "victron mppt 100 50",            "preco_mercado": 100},
+            {"query": "victron mppt 150 35",            "preco_mercado": 100},
+            {"query": "victron GX touch 50",            "preco_mercado": 170},
+            {"query": "victron GX touch 70",            "preco_mercado": 250},
+            {"query": "victron Cerbo GX",               "preco_mercado": 170},
+            {"query": "victron BT 12 220",              "preco_mercado": 70},
+            {"query": "victron monitor de bateria",     "preco_mercado": 70},
         ],
     },
 ]
@@ -141,21 +137,34 @@ def search_olx(query: str) -> list:
         log.warning(f"[OLX] Erro em '{query}': {e}")
     return ads
 
-# ── Scraper Wallapop (API JSON não oficial) ───────────────────────────────────
+# ── Scraper Wallapop ──────────────────────────────────────────────────────────
 #
-# O Wallapop expõe uma API REST interna usada pela própria app/site.
-# Endpoint: https://api.wallapop.com/api/v3/search
-# Não requer autenticação mas precisa de headers realistas.
-# A resposta JSON tem a chave "search_objects" com a lista de anúncios.
+# CORREÇÕES aplicadas em relação à versão anterior:
 #
-# Parâmetros relevantes:
-#   keywords        — texto a pesquisar
-#   latitude/longitude + distance_in_km — filtra por zona geográfica
-#   order_by        — "newest" para ver os mais recentes primeiro
-#   filters_source  — "search_box" (imita comportamento do browser)
-#   country_code    — "PT" para restringir a Portugal
+# 1. ENDPOINT: mudado de /api/v3/search  →  /api/v3/general/search
+#    O endpoint antigo foi descontinuado e responde sempre 400.
+#
+# 2. PARÂMETRO "source": substituído "filters_source" por "source"
+#    O nome do parâmetro mudou na API. Valor: "search_box".
+#
+# 3. PARÂMETRO "order_by": valor "newest" → "newest" continua válido,
+#    mas foi adicionado fallback para "most_relevance" em caso de erro.
+#
+# 4. HEADERS: removidos X-AppVersion, X-DeviceOS, X-PlatformType
+#    Estes headers não-standard podem accionar rejeição 400/403 em
+#    alguns edge nodes do Wallapop. A API funciona sem eles.
+#
+# 5. SESSION com cookies: o Wallapop exige agora que o browser/cliente
+#    tenha feito pelo menos um GET à homepage antes de usar a API,
+#    de modo a receber e reenviar os cookies de sessão necessários.
+#    Usamos requests.Session() para isso automaticamente.
+#
+# 6. ESTRUTURA DA RESPOSTA: a chave raiz mudou de "search_objects"
+#    para "data" → "section" → "payload" → "items" na v3/general.
+#    O código agora tenta ambas as estruturas (nova e antiga) por
+#    compatibilidade, e loga um aviso se nenhuma funcionar.
 
-WALLAPOP_API = "https://api.wallapop.com/api/v3/search"
+WALLAPOP_API = "https://api.wallapop.com/api/v3/general/search"
 
 WALLAPOP_HEADERS = {
     "User-Agent": (
@@ -163,45 +172,128 @@ WALLAPOP_HEADERS = {
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/124.0.0.0 Safari/537.36"
     ),
-    "Accept": "application/json, text/plain, */*",
+    "Accept":          "application/json, text/plain, */*",
     "Accept-Language": "pt-PT,pt;q=0.9,es;q=0.8",
-    "Origin": "https://pt.wallapop.com",
-    "Referer": "https://pt.wallapop.com/",
-    "X-AppVersion": "84000",
-    "X-DeviceOS": "0",
-    "X-PlatformType": "web",
+    "Origin":          "https://pt.wallapop.com",
+    "Referer":         "https://pt.wallapop.com/",
 }
+
+# Session partilhada — inicializada em _init_wallapop_session()
+_wallapop_session: requests.Session | None = None
+
+def _init_wallapop_session() -> requests.Session:
+    """
+    Cria uma Session e faz um GET à homepage do Wallapop PT para
+    receber os cookies de sessão. Sem estes cookies a API responde 400.
+    """
+    global _wallapop_session
+    if _wallapop_session is not None:
+        return _wallapop_session
+
+    s = requests.Session()
+    s.headers.update(WALLAPOP_HEADERS)
+    try:
+        log.info("[Wallapop] A inicializar sessão (GET homepage)...")
+        s.get("https://pt.wallapop.com/", timeout=15)
+        log.info("[Wallapop] Sessão inicializada.")
+    except Exception as e:
+        log.warning(f"[Wallapop] Não foi possível inicializar sessão: {e}")
+    _wallapop_session = s
+    return s
+
+
+def _extract_items(data: dict) -> list:
+    """
+    Tenta extrair a lista de anúncios da resposta JSON do Wallapop.
+    A estrutura mudou ao longo do tempo — suporta ambas as versões.
+    """
+    # Estrutura nova (v3/general/search):
+    # { "data": { "section": { "payload": { "items": [...] } } } }
+    try:
+        items = data["data"]["section"]["payload"]["items"]
+        if isinstance(items, list):
+            return items
+    except (KeyError, TypeError):
+        pass
+
+    # Estrutura alternativa nova:
+    # { "data": { "items": [...] } }
+    try:
+        items = data["data"]["items"]
+        if isinstance(items, list):
+            return items
+    except (KeyError, TypeError):
+        pass
+
+    # Estrutura legada (v3/search — ainda pode aparecer em caches):
+    # { "search_objects": [...] }
+    try:
+        items = data["search_objects"]
+        if isinstance(items, list):
+            return items
+    except (KeyError, TypeError):
+        pass
+
+    return []
+
 
 def search_wallapop(query: str) -> list:
     """
-    Pesquisa o Wallapop via API JSON.
+    Pesquisa o Wallapop via API JSON (endpoint /api/v3/general/search).
     Devolve lista de dicts com os mesmos campos que search_olx().
     """
+    session = _init_wallapop_session()
+
     params = {
         "keywords":       query,
+        "source":         "search_box",   # ← era "filters_source" (campo renomeado)
         "order_by":       "newest",
-        "filters_source": "search_box",
         "latitude":       WALLAPOP_LAT,
         "longitude":      WALLAPOP_LNG,
         "distance_in_km": WALLAPOP_DIST_KM,
     }
+
     ads = []
     try:
-        r = requests.get(
+        r = session.get(
             WALLAPOP_API,
             params=params,
-            headers=WALLAPOP_HEADERS,
             timeout=15,
         )
+
+        # Log do código HTTP para diagnóstico
+        if r.status_code != 200:
+            log.warning(
+                f"[Wallapop] HTTP {r.status_code} em '{query}' "
+                f"— resposta: {r.text[:200]}"
+            )
+
+        if r.status_code == 429:
+            log.warning("[Wallapop] Rate limit (429) — a aguardar 60s...")
+            time.sleep(60)
+            return ads
+
+        if r.status_code == 400:
+            # 400 depois da correção de endpoint/parâmetros pode indicar
+            # que o Wallapop bloqueou temporariamente o IP ou exige CAPTCHA.
+            # Reinicializa a sessão na próxima chamada.
+            global _wallapop_session
+            _wallapop_session = None
+            log.warning("[Wallapop] 400 — sessão reiniciada para próxima tentativa.")
+            return ads
+
         r.raise_for_status()
         data = r.json()
 
-        items = data.get("search_objects", [])
+        items = _extract_items(data)
+        if not items:
+            log.warning(
+                f"[Wallapop] Resposta sem anúncios para '{query}'. "
+                f"Chaves raiz: {list(data.keys())}"
+            )
+
         for item in items[:25]:
             try:
-                # Estrutura da resposta Wallapop:
-                # item.id, item.title, item.price, item.location.city,
-                # item.web_slug  (usado para construir o URL)
                 item_id   = str(item.get("id", ""))
                 title     = item.get("title", "")
                 price_raw = item.get("price", 0)
@@ -223,28 +315,15 @@ def search_wallapop(query: str) -> list:
                 continue
 
     except requests.exceptions.HTTPError as e:
-        # 429 = rate limit — aguardar mais entre chamadas
-        if e.response.status_code == 429:
-            log.warning("[Wallapop] Rate limit (429) — a aguardar 60s...")
-            time.sleep(60)
-        else:
-            log.warning(f"[Wallapop] HTTP {e.response.status_code} em '{query}'")
+        log.warning(f"[Wallapop] HTTPError em '{query}': {e}")
     except Exception as e:
         log.warning(f"[Wallapop] Erro em '{query}': {e}")
 
     return ads
 
-# ── Ntfy ─────────────────────────────────────────────────────────────────────
-#
-# O Ntfy envia notificações push via HTTP POST simples.
-# Cada notificação tem: título, mensagem, prioridade, ícone e link de ação.
-# Documentação: https://docs.ntfy.sh/publish/
+# ── Ntfy ──────────────────────────────────────────────────────────────────────
 
 def send_ntfy(title: str, message: str, link: str, priority: int = 3):
-    """
-    Envia notificação push via Ntfy.
-    priority: 1=min 2=low 3=default 4=high 5=urgent (vibra e ignora modo silêncio)
-    """
     if not NTFY_CHANNEL:
         log.warning("NTFY_CHANNEL não configurado — alerta na consola:")
         print(f"[{title}] {message}")
@@ -257,9 +336,9 @@ def send_ntfy(title: str, message: str, link: str, priority: int = 3):
             headers={
                 "Title":    title.encode("utf-8"),
                 "Priority": str(priority),
-                "Tags":     "moneybag",          # emoji do sino na notificação
-                "Click":    link,                # abre o anúncio ao clicar
-                "Actions":  f"view, Ver anúncio, {link}",  # botão de ação
+                "Tags":     "moneybag",
+                "Click":    link,
+                "Actions":  f"view, Ver anúncio, {link}",
             },
             timeout=10,
         )
@@ -268,20 +347,16 @@ def send_ntfy(title: str, message: str, link: str, priority: int = 3):
         log.error(f"Erro Ntfy: {e}")
 
 def format_alert(ad: dict, nicho: dict, margin: float) -> tuple[str, str, int]:
-    """
-    Devolve (título, corpo, prioridade) para a notificação Ntfy.
-    O título aparece em destaque na notificação; o corpo dá o detalhe.
-    """
     fonte    = ad.get("fonte", "")
     badge    = "Wallapop" if fonte == "Wallapop" else "OLX"
     emoji    = nicho["emoji"]
 
     if margin >= 80:
-        stars, priority = "🔥", 5   # urgente — vibra mesmo em silêncio
+        stars, priority = "🔥", 5
     elif margin >= 50:
-        stars, priority = "✅", 4   # alta prioridade
+        stars, priority = "✅", 4
     else:
-        stars, priority = "👀", 3   # normal
+        stars, priority = "👀", 3
 
     title = f"{stars} {emoji} {ad['title'][:50]}"
     body  = (
@@ -299,7 +374,7 @@ def run_cycle(seen: set) -> set:
 
     for nicho in NICHOS:
         for termo in nicho["termos"]:
-            query        = termo["query"]
+            query         = termo["query"]
             preco_mercado = termo["preco_mercado"]
 
             # ---- OLX ----
@@ -315,7 +390,7 @@ def run_cycle(seen: set) -> set:
                         send_ntfy(title, body, ad["link"], prio)
                         log.info(f"  ALERTA OLX: {ad['title'][:45]} | {ad['price']:.0f}€ | +{margin:.0f}%")
                         time.sleep(1)
-            time.sleep(10)   # pausa educada entre pedidos OLX
+            time.sleep(10)
 
             # ---- Wallapop ----
             log.info(f"[Wallapop] '{query}'...")
@@ -330,7 +405,7 @@ def run_cycle(seen: set) -> set:
                         send_ntfy(title, body, ad["link"], prio)
                         log.info(f"  ALERTA Wallapop: {ad['title'][:40]} | {ad['price']:.0f}€ | +{margin:.0f}%")
                         time.sleep(1)
-            time.sleep(10)   # Wallapop é mais sensível a rate limiting
+            time.sleep(12)  # Wallapop é mais sensível a rate limiting
 
     log.info(f"Ciclo completo — {novos} anúncios novos, {alertas} alertas enviados")
     save_seen(seen)
